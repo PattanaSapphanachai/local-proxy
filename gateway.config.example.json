@@ -1,0 +1,55 @@
+{
+  "host": "127.0.0.1",
+  "port": 8787,
+  "providers": {
+    "mtel": {
+      "baseUrl": "https://polycon.mtel.cloud",
+      "discoverModels": true,
+      "apiKeyFile": "~/.config/ia-os/secrets/mtel-api-key",
+      "protocols": {
+        "anthropic": {
+          "path": "/v1/messages",
+          "auth": "anthropic",
+          "headers": { "anthropic-version": "2023-06-01" }
+        }
+      }
+    },
+    "codex-as-api": {
+      "baseUrl": "http://127.0.0.1:18080",
+      "protocols": {
+        "openai": {
+          "path": "/v1/chat/completions",
+          "auth": "none"
+        }
+      }
+    }
+  },
+  "models": {
+    "claude-main": {
+      "provider": "mtel",
+      "providerProtocol": "anthropic",
+      "upstreamModel": "claude-sonnet-4-5",
+      "contextLimit": 200000,
+      "maxOutputTokens": 8192,
+      "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true },
+      "defaults": { "reasoning": "medium" }
+    },
+    "gpt-main": {
+      "provider": "mtel",
+      "providerProtocol": "anthropic",
+      "upstreamModel": "gpt-5.6-sol",
+      "contextLimit": 400000,
+      "maxOutputTokens": 8192,
+      "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true },
+      "defaults": { "reasoning": "medium" }
+    },
+    "codex-gpt-5.6-sol": {
+      "provider": "codex-as-api",
+      "providerProtocol": "openai",
+      "upstreamModel": "gpt-5.6-sol",
+      "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true },
+      "providerOptions": { "openai": { "max_completion_tokens": null, "temperature": null } }
+    }
+  },
+  "defaultModel": "claude-main"
+}

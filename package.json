@@ -1,0 +1,13 @@
+{
+  "name": "provider-agnostic-ai-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-transform-types src/server.ts",
+    "test": "node --experimental-transform-types --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

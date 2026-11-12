@@ -1,0 +1,11 @@
+gateway.config.json
+.gateway-state.json
+.gateway-state.json.*.tmp
+.env
+node_modules/
+coverage/
+.DS_Store
+*.bak-*
+.omo/
+.claude/
+.codegraph
