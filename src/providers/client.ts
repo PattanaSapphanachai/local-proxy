@@ -11,6 +11,8 @@ export interface ProviderConfig {
   auth?: ProviderAuth;
   headers?: Record<string, string>;
   protocols?: Partial<Record<Protocol, ProviderProtocolConfig>>;
+  /** Served by a backend the gateway runs itself, so its address and credentials are not user settings. */
+  embedded?: "chatgpt";
 }
 export interface ProviderRequest { providerId: string; protocol: Protocol; body: Record<string, unknown>; stream: boolean; headers?: Record<string, string> }
 export interface ProviderClient {
@@ -30,6 +32,7 @@ export function clientIdentityHeaders(incoming: Record<string, string | string[]
 export class HttpProviderClient implements ProviderClient {
   readonly #providers = new Map<string, ProviderConfig>();
   constructor(providers: ProviderConfig[]) { for (const provider of providers) this.#providers.set(provider.id, provider); }
+  configure(provider: ProviderConfig): void { this.#providers.set(provider.id, provider); }
   #config(id: string): ProviderConfig {
     const config = this.#providers.get(id);
     if (!config) throw new GatewayError("UPSTREAM_UNAVAILABLE", `Provider is not configured: ${id}`, 502);

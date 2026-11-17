@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Local Proxy</title>
+<style>
+:root { --bg:#f4f5f8; --card:#fff; --text:#1b1f27; --muted:#667085; --line:#e4e7ec; --accent:#4f46e5; --accent-hover:#4338ca; --accent-text:#fff; --ok:#12b76a; --warn:#f79009; --bad:#f04438; --field:#fff; --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06); --radius:12px; --gap:16px; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0f1117; --card:#171a22; --text:#e6e8ee; --muted:#8b93a5; --line:#262b36; --field:#0f1117; --accent:#6366f1; --accent-hover:#5558e6; --shadow:none; } }
+* { box-sizing:border-box }
+html { -webkit-text-size-adjust:100% }
+body { margin:0; min-height:100vh; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); -webkit-user-select:none; user-select:none; -webkit-font-smoothing:antialiased }
+main { max-width:1080px; margin:0 auto; padding:0 clamp(12px, 3vw, 28px) 40px }
+header { position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:16px 0 14px; margin-bottom:4px; background:color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px) }
+h1 { font-size:20px; margin:0; letter-spacing:-.01em }
+h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px }
+.pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); font-weight:500; white-space:nowrap }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--muted); transition:background .2s } .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap:var(--gap); align-items:start }
+.card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:clamp(14px, 2.5vw, 20px); box-shadow:var(--shadow); min-width:0 }
+.card.wide { grid-column:1 / -1 }
+.grid:has(#gptCard[hidden]) #cdCard { grid-column:1 / -1 }
+.row { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap:12px } .row > label { margin:0 }
+label { display:block; font-size:12px; color:var(--muted); margin:12px 0 0; min-width:0 } label > span { display:block; margin-bottom:4px }
+input, select { width:100%; min-height:36px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--text); font:inherit; -webkit-user-select:text; user-select:text; transition:border-color .15s, box-shadow .15s }
+input:hover, select:hover { border-color:color-mix(in srgb, var(--muted) 45%, var(--line)) }
+input:focus-visible, select:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent) }
+button, a.button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:36px; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); font:inherit; font-weight:500; cursor:pointer; text-decoration:none; white-space:nowrap; transition:background .15s, border-color .15s, transform .05s }
+button:hover:not(:disabled), a.button:hover { background:color-mix(in srgb, var(--line) 45%, var(--card)) }
+button:active:not(:disabled) { transform:translateY(1px) }
+button:focus-visible, a.button:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-text) } button.primary:hover:not(:disabled) { background:var(--accent-hover); border-color:var(--accent-hover) }
+button:disabled { opacity:.5; cursor:default }
+.actions { display:flex; gap:8px; margin-top:14px; align-items:center; flex-wrap:wrap } .spacer { flex:1 1 0 }
+code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; -webkit-user-select:text; user-select:text }
+.addr { display:flex; align-items:center; gap:10px; justify-content:space-between; flex-wrap:wrap } .addr code { font-size:15px; flex:1 1 200px; overflow-wrap:anywhere }
+.meta, .hint { color:var(--muted); font-size:12px; margin-top:8px; overflow-wrap:anywhere }
+.banner { background:color-mix(in srgb, var(--warn) 15%, var(--card)); border:1px solid var(--warn); border-radius:10px; padding:10px 14px; margin-bottom:var(--gap); display:none }
+.key { display:flex; gap:8px } .key input { flex:1; min-width:0 }
+#toast { position:fixed; left:50%; bottom:max(24px, env(safe-area-inset-bottom)); transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px; border-radius:10px; opacity:0; transition:opacity .2s; pointer-events:none; max-width:min(90vw, 520px); text-align:center; box-shadow:0 6px 24px rgba(0,0,0,.18) }
+#toast.show { opacity:1 } #toast.error { background:var(--bad); color:#fff }
+#log { margin:14px 0 0; max-height:min(55vh, 520px); overflow:auto; background:var(--field); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; word-break:break-all; -webkit-user-select:text; user-select:text }
+#log[hidden] { display:none } #log .warn { color:var(--warn) } #log .error { color:var(--bad) } #log .ts { color:var(--muted) } #log .empty { color:var(--muted); font-style:italic }
+#cdIssues { margin:8px 0 0; padding-left:18px } #cdIssues:empty { display:none }
+label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap } label.inline input { width:auto; min-height:0 }
+@media (max-width: 600px) {
+  .actions > button, .actions > a.button { flex:1 1 140px }
+  .actions > .spacer { display:none }
+  .actions > label.inline { flex:1 1 100%; justify-content:center; margin-top:4px }
+  .addr > button { flex:1 1 100% }
+  header { padding:12px 0 10px }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition:none !important } }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Local Proxy</h1><span class="pill" role="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></span></header>
+  <div id="banner" class="banner">No API key saved yet. Enter your MTEL API key in the Connection section to start routing requests.</div>
+
+  <div class="grid">
+  <section class="card wide">
+    <h2>Gateway address</h2>
+    <div class="addr"><code id="addr">…</code><button id="copy">Copy</button></div>
+    <div class="meta">Point your client (Claude Code, OpenCode, …) at this address. Anthropic-style clients use <code>/v1/messages</code>, OpenAI-style clients use <code>/v1/chat/completions</code>.</div>
+    <div class="meta" id="uptime"></div>
+  </section>
+
+  <section class="card">
+    <h2>Routing</h2>
+    <div class="row">
+      <label><span>Model</span><select id="model"></select></label>
+      <label><span>Mode</span><select id="mode"><option value="force-model">Force model</option><option value="force-provider">Force provider</option></select></label>
+      <label><span>Reasoning effort</span><select id="effort"><option value="">Client default</option><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
+    </div>
+    <div class="hint" id="modeHint"></div>
+    <div class="actions"><button id="refreshModels">Refresh models</button><span class="spacer"></span><button id="applyRouting" class="primary">Apply</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Connection</h2>
+    <div class="row">
+      <label id="providerLabel"><span>Provider</span><select id="provider"></select></label>
+      <label><span>Base URL</span><input id="baseUrl" type="url" placeholder="https://polycon.mtel.cloud" spellcheck="false"></label>
+    </div>
+    <label><span>API key</span><div class="key"><input id="apiKey" type="password" placeholder="Paste your API key" autocomplete="off" spellcheck="false"><button id="reveal" type="button">Show</button></div></label>
+    <div class="hint" id="keyHint"></div>
+    <div class="actions"><button id="removeKey">Remove key</button><span class="spacer"></span><button id="saveSettings" class="primary">Save</button></div>
+  </section>
+  <section class="card" id="gptCard" hidden>
+    <h2>ChatGPT</h2>
+    <div class="meta" id="gptStatus">Checking…</div>
+    <div class="hint">GPT models listed under the <code id="gptProvider">chatgpt</code> group run on your own ChatGPT plan. The sign-in is shared with the Codex app and CLI.</div>
+    <div class="actions"><button id="gptCancel" style="display:none">Cancel sign-in</button><span class="spacer"></span><button id="gptLogin" class="primary">Sign in with ChatGPT</button></div>
+  </section>
+  <section class="card" id="cdCard">
+    <h2>Claude Desktop</h2>
+    <div class="meta" id="cdStatus">Checking…</div>
+    <ul class="hint" id="cdIssues"></ul>
+    <div class="actions"><a id="cdDownload" class="button" href="https://claude.ai/download" target="_blank" rel="noopener" style="display:none">Download Claude Desktop</a><button id="cdOpen" disabled>Open Claude Desktop</button><button id="cdMode" disabled>Switch to Claude.ai (1p)</button><span class="spacer"></span><button id="cdSetup" class="primary" disabled>Set up Claude Desktop</button></div>
+  </section>
+  <section class="card wide">
+    <h2>Activity log</h2>
+    <div class="meta">Every request the gateway handles, plus warnings, as the terminal shows with <code>GATEWAY_LOG_LEVEL=info</code>.</div>
+    <div class="actions"><button id="toggleLog" class="primary">Show log</button><button id="copyLog" disabled>Copy</button><button id="clearLog" disabled>Clear</button><span class="spacer"></span><label class="inline"><input id="follow" type="checkbox" checked> Follow new lines</label></div>
+    <pre id="log" hidden></pre>
+  </section>
+  </div>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let toastTimer;
+  const toast = (text, error) => { const t = $("toast"); t.textContent = text; t.className = (error ? "error " : "") + "show"; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ""; }, error ? 5000 : 2200); };
+  const api = async (path, init) => {
+    const r = await fetch(path, { headers: { "content-type": "application/json" }, cache: "no-store", ...init });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((data.error && (data.error.message || data.error)) || r.statusText);
+    return data;
+  };
+  const setStatus = (cls, text) => { $("dot").className = "dot " + cls; $("statusText").textContent = text; };
+  const fmtUptime = (s) => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  const modeHints = {
+    "force-model": "Every request goes to the selected model, whatever model the client asked for.",
+    "force-provider": "Requests keep their capability tier (Opus↔Sol, Sonnet↔Terra, …) within the selected model's provider and generation."
+  };
+  let routing = null, settings = null;
+
+  async function loadStatus() {
+    try {
+      const s = await api("/status");
+      setStatus("ok", "Running");
+      $("addr").textContent = s.url;
+      $("uptime").textContent = `Up ${fmtUptime(s.uptimeSeconds)} · ${s.modelCount} models · routing to ${s.routing.model} via ${s.routing.provider}`;
+      routing = s.routing; syncRoutingForm();
+    } catch { setStatus("bad", "Unreachable"); }
+  }
+  function syncRoutingForm() {
+    if (!routing) return;
+    if ([...$("model").options].some((o) => o.value === routing.model)) $("model").value = routing.model;
+    $("mode").value = routing.mode; $("effort").value = routing.reasoningEffort ?? "";
+    $("modeHint").textContent = modeHints[$("mode").value] || "";
+  }
+  async function loadModels() {
+    const { models } = await api("/models");
+    const groups = new Map();
+    for (const m of models) { if (!groups.has(m.provider)) groups.set(m.provider, []); groups.get(m.provider).push(m); }
+    const select = $("model"); select.replaceChildren();
+    for (const [provider, list] of groups) {
+      const g = document.createElement("optgroup"); g.label = provider;
+      for (const m of list.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))) {
+        const o = document.createElement("option"); o.value = m.id; o.textContent = m.id === m.upstreamModel ? m.id : `${m.id} → ${m.upstreamModel}`; g.appendChild(o);
+      }
+      select.appendChild(g);
+    }
+    syncRoutingForm();
+  }
+  async function loadSettings() {
+    settings = await api("/settings");
+    const select = $("provider"); const chosen = select.dataset.chosen; select.replaceChildren();
+    for (const p of settings.providers) { const o = document.createElement("option"); o.value = p.id; o.textContent = p.id; select.appendChild(o); }
+    select.value = chosen && settings.providers.some((p) => p.id === chosen) ? chosen : settings.defaultProvider;
+    $("providerLabel").style.display = settings.providers.length > 1 ? "" : "none";
+    syncSettingsForm();
+    const main = settings.providers.find((p) => p.id === settings.defaultProvider);
+    $("banner").style.display = main && !main.hasApiKey ? "block" : "none";
+  }
+  function syncSettingsForm() {
+    const p = settings.providers.find((x) => x.id === $("provider").value); if (!p) return;
+    $("baseUrl").value = p.baseUrl; $("apiKey").value = "";
+    $("keyHint").textContent = p.hasApiKey
+      ? `A key ending in ${p.apiKeyHint} is saved${settings.persisted ? "" : " for this run only"}. Leave the field empty to keep it.`
+      : "No key saved for this provider.";
+    $("removeKey").disabled = !p.hasApiKey;
+  }
+
+  $("provider").addEventListener("change", (e) => { e.target.dataset.chosen = e.target.value; syncSettingsForm(); });
+  $("mode").addEventListener("change", () => { $("modeHint").textContent = modeHints[$("mode").value] || ""; });
+  $("copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("addr").textContent); toast("Address copied"); } catch { toast("Could not copy", true); } });
+  $("reveal").addEventListener("click", () => { const i = $("apiKey"); i.type = i.type === "password" ? "text" : "password"; $("reveal").textContent = i.type === "password" ? "Show" : "Hide"; });
+  $("refreshModels").addEventListener("click", async () => { $("refreshModels").disabled = true; try { await loadModels(); toast("Model list refreshed"); } catch (e) { toast(e.message, true); } finally { $("refreshModels").disabled = false; } });
+  $("applyRouting").addEventListener("click", async () => {
+    $("applyRouting").disabled = true;
+    try {
+      routing = await api("/routing", { method: "PUT", body: JSON.stringify({ model: $("model").value, mode: $("mode").value, reasoningEffort: $("effort").value || null }) });
+      toast(`Now routing to ${routing.model}`); loadStatus();
+    } catch (e) { toast(e.message, true); } finally { $("applyRouting").disabled = false; }
+  });
+  $("saveSettings").addEventListener("click", async () => {
+    const body = { provider: $("provider").value, baseUrl: $("baseUrl").value.trim() };
+    const key = $("apiKey").value.trim(); if (key) body.apiKey = key;
+    $("saveSettings").disabled = true;
+    try { await api("/settings", { method: "PUT", body: JSON.stringify(body) }); toast("Connection settings saved"); await loadSettings(); loadModels().catch(() => {}); loadClaudeDesktop(); }
+    catch (e) { toast(e.message, true); } finally { $("saveSettings").disabled = false; }
+  });
+  $("removeKey").addEventListener("click", async () => {
+    if (!confirm("Remove the saved API key for this provider?")) return;
+    try { await api("/settings", { method: "PUT", body: JSON.stringify({ provider: $("provider").value, apiKey: "" }) }); toast("API key removed"); await loadSettings(); }
+    catch (e) { toast(e.message, true); }
+  });
+
+  // ChatGPT: the gateway runs codex-as-api itself; signing in opens the ChatGPT login page in the browser.
+  let gptLogin = null, gptTimer = null;
+  async function loadChatGPT() {
+    try {
+      const s = await api("/chatgpt");
+      $("gptCard").hidden = !s.enabled; if (!s.enabled) return;
+      $("gptProvider").textContent = s.provider;
+      const pending = gptLogin !== null;
+      $("gptStatus").textContent = pending ? "Waiting for you to finish signing in in the browser…"
+        : s.status === "authenticated" ? `Signed in. ${s.modelCount} ChatGPT models are available.`
+        : s.status === "reauthentication_required" ? "Your ChatGPT sign-in has expired or is unreadable. Sign in again."
+        : "Not signed in. Sign in to use GPT through your ChatGPT plan.";
+      $("gptLogin").textContent = s.status === "authenticated" ? "Sign in again" : "Sign in with ChatGPT";
+      $("gptLogin").disabled = pending; $("gptCancel").style.display = pending ? "" : "none";
+    } catch (e) { $("gptStatus").textContent = `Could not check ChatGPT: ${e.message}`; }
+  }
+  const endGptLogin = async () => { clearInterval(gptTimer); gptTimer = null; gptLogin = null; await loadChatGPT(); };
+  $("gptLogin").addEventListener("click", async () => {
+    $("gptLogin").disabled = true;
+    try {
+      gptLogin = await api("/chatgpt/login", { method: "POST" });
+      window.open(gptLogin.auth_url, "_blank", "noopener"); await loadChatGPT();
+      gptTimer = setInterval(async () => {
+        try {
+          const r = await api(`/chatgpt/login/${encodeURIComponent(gptLogin.id)}`);
+          if (r.status === "pending") return;
+          if (r.status === "succeeded") { toast("Signed in to ChatGPT"); loadModels().catch(() => {}); }
+          else toast(`ChatGPT sign-in ${r.status}${r.error_code ? `: ${r.error_code}` : ""}`, r.status !== "cancelled");
+          await endGptLogin();
+        } catch (e) { toast(e.message, true); await endGptLogin(); }
+      }, 1500);
+    } catch (e) { toast(e.message, true); gptLogin = null; await loadChatGPT(); }
+  });
+  $("gptCancel").addEventListener("click", async () => {
+    if (gptLogin) await api(`/chatgpt/login/${encodeURIComponent(gptLogin.id)}`, { method: "DELETE" }).catch(() => {});
+    await endGptLogin();
+  });
+
+  // Claude Desktop: one click writes the third-party-mode profile that points Claude Desktop at this gateway.
+  // The mode button flips Claude Desktop between Claude.ai (1p) and this gateway (3p); the profile stays either way.
+  let claudeDesktop = null;
+  async function loadClaudeDesktop() {
+    try {
+      const s = await api("/claude-desktop"); claudeDesktop = s;
+      const main = settings && settings.providers.find((p) => p.id === settings.defaultProvider);
+      const keyNote = main && !main.hasApiKey ? " Save your API key in the Connection section first." : "";
+      $("cdStatus").textContent = !s.supported ? s.issues[0]
+        : !s.installed ? "Claude Desktop is not installed on this Mac."
+        : s.configured ? `Claude Desktop uses the "${s.profileName}" profile and talks to ${s.gatewayUrl}.${keyNote}`
+        : s.deploymentMode === "1p" && s.profileReady ? `Claude Desktop is in Claude.ai (1p) mode. The "${s.profileName}" profile is kept for switching back.${keyNote}`
+        : `Claude Desktop is installed but not set up for this gateway yet.${keyNote}`;
+      const list = $("cdIssues"); list.replaceChildren();
+      for (const issue of s.supported && s.installed && !(s.deploymentMode === "1p" && s.profileReady) ? s.issues : []) { const li = document.createElement("li"); li.textContent = issue; list.appendChild(li); }
+      $("cdDownload").style.display = s.supported && !s.installed ? "" : "none";
+      $("cdSetup").disabled = $("cdOpen").disabled = !s.supported || !s.installed;
+      $("cdSetup").textContent = s.configured ? "Set up again" : "Set up Claude Desktop";
+      const in3p = s.deploymentMode === "3p";
+      $("cdMode").disabled = !s.supported || !s.installed || (!in3p && !s.profileReady);
+      $("cdMode").textContent = in3p ? "Switch to Claude.ai (1p)" : "Switch to gateway (3p)";
+      $("cdMode").title = in3p ? "Relaunch Claude Desktop signed in to Claude.ai. The gateway profile is kept."
+        : s.profileReady ? `Relaunch Claude Desktop on the "${s.profileName}" profile.` : "Set up Claude Desktop first.";
+    } catch (e) { $("cdStatus").textContent = `Could not check Claude Desktop: ${e.message}`; }
+  }
+  $("cdSetup").addEventListener("click", async () => {
+    if (claudeDesktop?.running && !confirm("Claude Desktop is running. It will be quit, configured, and opened again. Continue?")) return;
+    $("cdSetup").disabled = true;
+    try { const r = await api("/claude-desktop/setup", { method: "POST" }); toast(r.relaunched ? "Claude Desktop is set up and opening" : "Claude Desktop is set up"); }
+    catch (e) { toast(e.message, true); }
+    finally { await loadClaudeDesktop(); }
+  });
+  $("cdOpen").addEventListener("click", async () => { try { await api("/claude-desktop/open", { method: "POST" }); } catch (e) { toast(e.message, true); } });
+  $("cdMode").addEventListener("click", async () => {
+    const target = claudeDesktop?.deploymentMode === "3p" ? "1p" : "3p";
+    const label = target === "3p" ? "this gateway (3p)" : "Claude.ai (1p)";
+    if (claudeDesktop?.running && !confirm(`Claude Desktop is running. It will be quit, switched to ${label}, and opened again. Continue?`)) return;
+    $("cdMode").disabled = true;
+    try { const r = await api("/claude-desktop/mode", { method: "PUT", body: JSON.stringify({ mode: target }) }); toast(`Claude Desktop switched to ${label}${r.relaunched ? " and is opening" : ""}`); }
+    catch (e) { toast(e.message, true); }
+    finally { await loadClaudeDesktop(); }
+  });
+
+  // Activity log: streams /logs/stream while the panel is open; EventSource reconnects with Last-Event-ID so nothing is missed.
+  const logEl = $("log"); const MAX_LOG_LINES = 1000; let logSource = null, lastLogId = 0;
+  const showEmpty = () => { if (!logEl.children.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = "Waiting for requests…"; logEl.appendChild(e); } };
+  const appendLog = (line) => {
+    lastLogId = Math.max(lastLogId, line.id);
+    const placeholder = logEl.querySelector(".empty"); if (placeholder) placeholder.remove();
+    const row = document.createElement("div"); row.className = line.level;
+    const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = new Date(line.at).toLocaleTimeString([], { hour12: false }) + "  ";
+    row.append(ts, document.createTextNode(line.text)); logEl.appendChild(row);
+    while (logEl.children.length > MAX_LOG_LINES) logEl.firstChild.remove();
+    if ($("follow").checked) logEl.scrollTop = logEl.scrollHeight;
+  };
+  const setLogButtons = (open) => { $("toggleLog").textContent = open ? "Hide log" : "Show log"; $("copyLog").disabled = $("clearLog").disabled = !open; };
+  const openLog = () => {
+    logEl.hidden = false; setLogButtons(true); showEmpty();
+    logSource = new EventSource(`/logs/stream?since=${lastLogId}`);
+    logSource.onmessage = (e) => { try { appendLog(JSON.parse(e.data)); } catch {} };
+    logSource.onerror = () => { setStatus("bad", "Reconnecting…"); };
+  };
+  const closeLog = () => { if (logSource) logSource.close(); logSource = null; logEl.hidden = true; setLogButtons(false); };
+  $("toggleLog").addEventListener("click", () => (logSource ? closeLog() : openLog()));
+  $("clearLog").addEventListener("click", () => { logEl.replaceChildren(); showEmpty(); });
+  $("copyLog").addEventListener("click", async () => {
+    const text = [...logEl.children].filter((r) => !r.classList.contains("empty")).map((r) => r.textContent).join("\n");
+    try { await navigator.clipboard.writeText(text); toast("Log copied"); } catch { toast("Could not copy", true); }
+  });
+
+  (async () => { await loadStatus(); await Promise.allSettled([loadSettings(), loadModels(), loadChatGPT()]); await loadClaudeDesktop(); setInterval(loadStatus, 5000); })();
+})();
+</script>
+</body>
+</html>

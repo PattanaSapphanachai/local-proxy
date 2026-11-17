@@ -16,6 +16,7 @@ export type GatewayResult =
   | { stream: true; sessionId: string; mode: "passthrough" | "converted"; events: AsyncIterable<string> };
 
 const comparable = (messages: CanonicalMessage[]): string => JSON.stringify(messages.map(({ role, content }) => ({ role, content })));
+const withoutMetadata = (body: Record<string, unknown>): Record<string, unknown> => { if (body.metadata === undefined) return body; const { metadata: _metadata, ...rest } = body; return rest; };
 const modelFamily = (model: string): string => model.split("-", 1)[0].toLowerCase();
 type ModelTier = "frontier" | "flagship" | "balanced" | "efficient";
 const modelTier = (model: string): ModelTier | undefined => {
@@ -50,6 +51,8 @@ class StreamAccumulator {
 }
 
 export class Gateway {
+  // Upstream models (provider/upstreamModel) that rejected the metadata field; later requests to them leave it out.
+  readonly #metadataRejected = new Set<string>();
   constructor(private models: ModelRegistry, private sessions: SessionService, private routing: RoutingService, private adapters: AdapterRegistry, private providers: ProviderClient,
     private context = new ContextManager(), private observer: Observer = new NoopObserver()) {}
 
@@ -67,7 +70,7 @@ export class Gateway {
     const selectedFamily = modelFamily(selectedModel.upstreamModel);
     const selectedSeries = modelSeries(selectedModel.upstreamModel);
     const tierModel = route.mode === "force-provider" && requestedTier && requestedModel && modelFamily(requestedModel) !== selectedFamily
-      ? this.models.list().filter((candidate) => modelFamily(candidate.upstreamModel) === selectedFamily && modelTier(candidate.upstreamModel) === requestedTier
+      ? this.models.list().filter((candidate) => candidate.provider === selectedModel.provider && modelFamily(candidate.upstreamModel) === selectedFamily && modelTier(candidate.upstreamModel) === requestedTier
           && (requestedTier === "frontier" || modelSeries(candidate.upstreamModel) === selectedSeries))
         .sort((a, b) => b.upstreamModel.localeCompare(a.upstreamModel, undefined, { numeric: true }))[0]
       : undefined;
@@ -80,19 +83,33 @@ export class Gateway {
     const completeIncomingHistory = before === "[]" || before === incoming || comparable(merged.messages) === incoming;
     const modelMatches = requestedModel === undefined || requestedModel === model.id || requestedModel === model.upstreamModel;
     const mode = forceProviderPassthrough || (protocol === model.providerProtocol && modelMatches && effortMatches && completeIncomingHistory) ? "passthrough" : "converted";
-    const upstreamBody = forceProviderPassthrough ? structuredClone(body) : mode === "passthrough" ? clientAdapter.buildPassthroughRequest(body, model) : targetAdapter.buildUpstreamRequest(parsed, merged, model);
-    // Safety net only: an upstream that replays history (Meridian without a resumable session) can reject
-    // tool_reference blocks. Retry such a rejection once with every reference flattened to text, and say so.
-    const retryBody = model.providerProtocol === "anthropic" ? flattenToolReferences(upstreamBody) : upstreamBody;
-    const rejectsToolReference = (error: unknown): boolean => retryBody !== upstreamBody && error instanceof GatewayError && error.message.includes("tool_reference");
-    const logRetry = () => console.warn("[tool-reference] upstream rejected tool_reference blocks; retrying once with all of them as text. Frequent retries mean the upstream is not resuming sessions.");
+    const builtBody = forceProviderPassthrough ? structuredClone(body) : mode === "passthrough" ? clientAdapter.buildPassthroughRequest(body, model) : targetAdapter.buildUpstreamRequest(parsed, merged, model);
+    const metadataKey = `${model.provider}/${model.upstreamModel}`;
+    const upstreamBody = this.#metadataRejected.has(metadataKey) ? withoutMetadata(builtBody) : builtBody;
+    // Safety nets only, each retried once and said so: an upstream that replays history (Meridian without a
+    // resumable session) can reject tool_reference blocks, and one that bridges GPT over the Anthropic protocol
+    // (Polycon's Codex OAuth transport) rejects metadata. Metadata is kept otherwise: it carries the session identity.
+    const flattenedBody = model.providerProtocol === "anthropic" ? flattenToolReferences(upstreamBody) : upstreamBody;
+    const retryBodyFor = (error: unknown): Record<string, unknown> | undefined => {
+      if (!(error instanceof GatewayError)) return undefined;
+      if (upstreamBody.metadata !== undefined && /metadata is not supported/i.test(error.message)) {
+        this.#metadataRejected.add(metadataKey);
+        console.warn(`[metadata] ${model.upstreamModel} rejected the metadata field; retrying once without it and leaving it out for this model from now on.`);
+        return withoutMetadata(upstreamBody);
+      }
+      if (flattenedBody !== upstreamBody && error.message.includes("tool_reference")) {
+        console.warn("[tool-reference] upstream rejected tool_reference blocks; retrying once with all of them as text. Frequent retries mean the upstream is not resuming sessions.");
+        return flattenedBody;
+      }
+      return undefined;
+    };
     const observation: RouteObservation = { incomingProtocol: protocol, incomingModel: requestedModel ?? null, selectedModel: model.id, upstreamProvider: model.provider, upstreamModel: forceProviderPassthrough ? requestedModel ?? model.upstreamModel : model.upstreamModel, mode };
     try {
       if (!parsed.stream) {
         const complete = (body: Record<string, unknown>) => this.providers.complete({ providerId: model.provider, protocol: model.providerProtocol, body, stream: false, headers: clientHeaders });
         let raw: Record<string, unknown>;
         try { raw = await complete(upstreamBody); }
-        catch (error) { if (!rejectsToolReference(error)) throw error; logRetry(); raw = await complete(retryBody); }
+        catch (error) { const retry = retryBodyFor(error); if (!retry) throw error; raw = await complete(retry); }
         const canonical = targetAdapter.normalizeUpstreamResponse(raw); await this.sessions.appendAssistant(merged.id, canonical.message);
         Object.assign(observation, { latencyMs: performance.now() - started, inputTokens: canonical.usage?.inputTokens, outputTokens: canonical.usage?.outputTokens, toolCalls: canonical.message.content.filter((b) => b.type === "tool_call").length });
         this.observer.record(observation);
@@ -103,8 +120,9 @@ export class Gateway {
         let received = false;
         try { for await (const event of self.providers.stream({ providerId: model.provider, protocol: model.providerProtocol, body: upstreamBody, stream: true, headers: clientHeaders })) { received = true; yield event; } }
         catch (error) {
-          if (received || !rejectsToolReference(error)) throw error;
-          logRetry(); yield* self.providers.stream({ providerId: model.provider, protocol: model.providerProtocol, body: retryBody, stream: true, headers: clientHeaders });
+          const retry = received ? undefined : retryBodyFor(error);
+          if (!retry) throw error;
+          yield* self.providers.stream({ providerId: model.provider, protocol: model.providerProtocol, body: retry, stream: true, headers: clientHeaders });
         }
       }
       async function* translate(): AsyncIterable<string> {

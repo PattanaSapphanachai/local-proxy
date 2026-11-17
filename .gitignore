@@ -1,4 +1,4 @@
-gateway.config.json
+/gateway.config.json
 .gateway-state.json
 .gateway-state.json.*.tmp
 .env
@@ -9,3 +9,7 @@ coverage/
 .omo/
 .claude/
 .codegraph
+dist/
+release/
+build/icon.iconset/
+/main.cjs

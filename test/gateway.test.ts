@@ -355,9 +355,50 @@ test("converted Anthropic requests keep metadata so upstream session identity su
   assert.equal(result.mode, "converted"); assert.deepEqual(providers.requests[0].body.metadata, metadata);
 });
 
+test("a metadata rejection is retried once without metadata, which is then left out for that upstream model", async () => {
+  const metadata = { user_id: JSON.stringify({ session_id: "sess-1" }) };
+  const rejection = () => new GatewayError("INVALID_REQUEST", 'Upstream 400: {"type":"error","error":{"type":"invalid_request_error","message":"metadata is not supported by the Codex OAuth HTTP transport"}}', 400);
+  const plain = setup("gpt-anthropic"); let calls = 0;
+  plain.providers.complete = async (request) => { plain.providers.requests.push(structuredClone(request)); if (calls++ === 0) throw rejection(); return anthropicResponse("ok"); };
+  const result = await plain.gateway.handle("anthropic", { model: "claude", metadata, max_tokens: 20, messages: [{ role: "user", content: "hi" }] }, "meta-retry");
+  assert.equal((result as any).body.content[0].text, "ok"); assert.equal(plain.providers.requests.length, 2);
+  assert.deepEqual(plain.providers.requests[0].body.metadata, metadata); assert.equal(plain.providers.requests[1].body.metadata, undefined);
+  await plain.gateway.handle("anthropic", { model: "claude", metadata, max_tokens: 20, messages: [{ role: "user", content: "again" }] }, "meta-retry");
+  assert.equal(plain.providers.requests.length, 3); assert.equal(plain.providers.requests[2].body.metadata, undefined);
+
+  const streamed = setup("gpt-anthropic"); let streams = 0;
+  streamed.providers.stream = async function* (request) {
+    streamed.providers.requests.push(structuredClone(request));
+    if (streams++ === 0) throw rejection();
+    yield { type: "message_start", message: { id: "s", usage: { input_tokens: 1 } } };
+    yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } };
+    yield { type: "message_stop" };
+  };
+  const stream = await streamed.gateway.handle("anthropic", { model: "claude", metadata, max_tokens: 20, stream: true, messages: [{ role: "user", content: "hi" }] }, "meta-stream");
+  const frames: string[] = []; for await (const frame of (stream as any).events) frames.push(frame);
+  assert.equal(streamed.providers.requests.length, 2); assert.equal(streamed.providers.requests[1].body.metadata, undefined);
+  assert.ok(frames.some((frame) => frame.includes("\"ok\""))); assert.ok(!frames.some((frame) => frame.startsWith("event: error")));
+
+  const other = setup("gpt-anthropic");
+  other.providers.complete = async () => { throw new GatewayError("INVALID_REQUEST", "Upstream 400: something else", 400); };
+  await assert.rejects(other.gateway.handle("anthropic", { model: "claude", metadata, max_tokens: 20, messages: [{ role: "user", content: "hi" }] }, "no-meta-retry"), /something else/);
+});
+
 test("output_config.effort is the incoming Anthropic effort and is preserved on passthrough", async () => {
   const { gateway, providers, routing } = setup("claude"); providers.responses.push(anthropicResponse("ok"));
   routing.update({ reasoningEffort: "high" });
   const result = await gateway.handle("anthropic", { model: "claude", output_config: { effort: "high" }, max_tokens: 20, messages: [{ role: "user", content: "hi" }] }, "effort-config");
   assert.equal(result.mode, "passthrough"); assert.deepEqual(providers.requests[0].body.output_config, { effort: "high" }); assert.equal(providers.requests[0].body.thinking, undefined);
+});
+
+test("stop reasons are translated to the client protocol on converted responses", async () => {
+  const toAnthropic = setup("gpt"); toAnthropic.providers.responses.push({ id: "o-tool", choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: "{}" } }] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 3, completion_tokens: 2 } });
+  const anthropic = await toAnthropic.gateway.handle("anthropic", { model: "claude", max_tokens: 50, messages: [{ role: "user", content: "use a tool" }] }) as any;
+  assert.equal(anthropic.body.stop_reason, "tool_use");
+  toAnthropic.providers.responses.push(openaiResponse("done"));
+  assert.equal((await toAnthropic.gateway.handle("anthropic", { model: "claude", max_tokens: 50, messages: [{ role: "user", content: "plain" }] }) as any).body.stop_reason, "end_turn");
+
+  const toOpenAI = setup("claude"); toOpenAI.providers.responses.push(anthropicResponse("done"));
+  const openai = await toOpenAI.gateway.handle("openai", { model: "gpt", messages: [{ role: "user", content: "plain" }] }) as any;
+  assert.equal(openai.body.choices[0].finish_reason, "stop");
 });

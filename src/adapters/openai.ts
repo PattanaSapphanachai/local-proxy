@@ -1,6 +1,6 @@
 import type { CanonicalContentBlock, CanonicalMessage, CanonicalRequest, CanonicalResponse, CanonicalStreamEvent, GatewaySession, ModelProfile } from "../types.ts";
 import type { ProviderAdapter } from "./provider.ts";
-import { id, jsonArguments, message, reasoningEffort, sse, textContent } from "./helpers.ts";
+import { id, jsonArguments, message, openaiFinishReason, reasoningEffort, sse, textContent } from "./helpers.ts";
 import { mapSettings } from "../settings.ts";
 import { GatewayError } from "../errors.ts";
 
@@ -68,7 +68,7 @@ export class OpenAIAdapter implements ProviderAdapter {
   buildClientResponse(response: CanonicalResponse): Record<string, unknown> {
     const calls = response.message.content.filter((b) => b.type === "tool_call") as any[];
     return { id: response.id, object: "chat.completion", created: Math.floor(Date.now() / 1000), choices: [{ index: 0, message: { role: "assistant", content: textContent(response.message.content) || null,
-      ...(calls.length ? { tool_calls: calls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments) } })) } : {}) }, finish_reason: response.stopReason ?? "stop" }],
+      ...(calls.length ? { tool_calls: calls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments) } })) } : {}) }, finish_reason: openaiFinishReason(response.stopReason) }],
       usage: { prompt_tokens: response.usage?.inputTokens ?? 0, completion_tokens: response.usage?.outputTokens ?? 0, total_tokens: (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0) } };
   }
   translateStreamEvent(event: any, state: Record<string, unknown> = {}): CanonicalStreamEvent[] {
@@ -93,7 +93,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (event.type === "tool_call_start") return [sse({ object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: event.id, type: "function", function: { name: event.name, arguments: "" } }] }, finish_reason: null }] })];
     if (event.type === "tool_call_delta") return [sse({ object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: event.id, function: { arguments: event.argumentsDelta } }] }, finish_reason: null }] })];
     if (event.type === "usage") return [sse({ choices: [], usage: { prompt_tokens: event.inputTokens, completion_tokens: event.outputTokens } })];
-    if (event.type === "message_end") return [sse({ object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: event.reason ?? "stop" }] }), sse("[DONE]")];
+    if (event.type === "message_end") return [sse({ object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: openaiFinishReason(event.reason) }] }), sse("[DONE]")];
     if (event.type === "error") return [sse({ error: event.error })];
     return [];
   }

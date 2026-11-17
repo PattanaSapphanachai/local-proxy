@@ -1,0 +1,27 @@
+{
+  "host": "127.0.0.1",
+  "port": 8787,
+  "providers": {
+    "mtel": {
+      "baseUrl": "https://polycon.mtel.cloud",
+      "discoverModels": true,
+      "protocols": {
+        "anthropic": {
+          "path": "/v1/messages",
+          "auth": "anthropic",
+          "headers": { "anthropic-version": "2023-06-01" }
+        }
+      }
+    },
+    "chatgpt": { "embedded": "chatgpt" }
+  },
+  "models": {
+    "claude-sonnet-4-6": {
+      "provider": "mtel",
+      "providerProtocol": "anthropic",
+      "upstreamModel": "claude-sonnet-4-6",
+      "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true }
+    }
+  },
+  "defaultModel": "claude-sonnet-4-6"
+}

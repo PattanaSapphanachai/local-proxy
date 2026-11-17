@@ -1,6 +1,6 @@
 import type { CanonicalContentBlock, CanonicalMessage, CanonicalRequest, CanonicalResponse, CanonicalStreamEvent, GatewaySession, ModelProfile } from "../types.ts";
 import type { ProviderAdapter } from "./provider.ts";
-import { id, message, reasoningEffort, sse, textContent } from "./helpers.ts";
+import { anthropicStopReason, id, message, reasoningEffort, sse, textContent } from "./helpers.ts";
 import { mapSettings } from "../settings.ts";
 import { GatewayError } from "../errors.ts";
 
@@ -112,7 +112,7 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
   buildClientResponse(response: CanonicalResponse): Record<string, unknown> {
     return { id: response.id, type: "message", role: "assistant", content: buildBlocks(response.message.content), model: "gateway-selected-model",
-      stop_reason: response.stopReason ?? "end_turn", stop_sequence: null,
+      stop_reason: anthropicStopReason(response.stopReason), stop_sequence: null,
       usage: { input_tokens: response.usage?.inputTokens ?? 0, output_tokens: response.usage?.outputTokens ?? 0 } };
   }
   translateStreamEvent(event: any, state: Record<string, unknown> = {}): CanonicalStreamEvent[] {
@@ -147,7 +147,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (event.type === "tool_call_delta") return [sse({ type: "content_block_delta", index: toolIndices.get(event.id) ?? 0, delta: { type: "input_json_delta", partial_json: event.argumentsDelta } }, "content_block_delta")];
     if (event.type === "tool_call_end") return [sse({ type: "content_block_stop", index: toolIndices.get(event.id) ?? 0 }, "content_block_stop")];
     if (event.type === "usage") return [sse({ type: "message_delta", delta: {}, usage: { output_tokens: event.outputTokens ?? 0 } }, "message_delta")];
-    if (event.type === "message_end") { const frames: string[] = []; if (state.textIndex !== undefined) frames.push(sse({ type: "content_block_stop", index: state.textIndex }, "content_block_stop")); frames.push(sse({ type: "message_delta", delta: { stop_reason: event.reason ?? "end_turn", stop_sequence: null }, usage: { output_tokens: 0 } }, "message_delta"), sse({ type: "message_stop" }, "message_stop")); return frames; }
+    if (event.type === "message_end") { const frames: string[] = []; if (state.textIndex !== undefined) frames.push(sse({ type: "content_block_stop", index: state.textIndex }, "content_block_stop")); frames.push(sse({ type: "message_delta", delta: { stop_reason: anthropicStopReason(event.reason), stop_sequence: null }, usage: { output_tokens: 0 } }, "message_delta"), sse({ type: "message_stop" }, "message_stop")); return frames; }
     if (event.type === "error") return [sse({ type: "error", error: { type: event.error.code.toLowerCase(), message: event.error.message } }, "error")];
     return [];
   }

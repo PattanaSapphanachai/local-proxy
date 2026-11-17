@@ -14,15 +14,7 @@
         }
       }
     },
-    "codex-as-api": {
-      "baseUrl": "http://127.0.0.1:18080",
-      "protocols": {
-        "openai": {
-          "path": "/v1/chat/completions",
-          "auth": "none"
-        }
-      }
-    }
+    "chatgpt": { "embedded": "chatgpt" }
   },
   "models": {
     "claude-main": {
@@ -42,13 +34,6 @@
       "maxOutputTokens": 8192,
       "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true },
       "defaults": { "reasoning": "medium" }
-    },
-    "codex-gpt-5.6-sol": {
-      "provider": "codex-as-api",
-      "providerProtocol": "openai",
-      "upstreamModel": "gpt-5.6-sol",
-      "capabilities": { "tools": true, "vision": true, "reasoning": true, "streaming": true },
-      "providerOptions": { "openai": { "max_completion_tokens": null, "temperature": null } }
     }
   },
   "defaultModel": "claude-main"

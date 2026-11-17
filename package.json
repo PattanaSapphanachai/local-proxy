@@ -1,13 +1,29 @@
 {
   "name": "provider-agnostic-ai-gateway",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node --experimental-transform-types src/server.ts",
-    "test": "node --experimental-transform-types --test test/*.test.ts"
+    "test": "node --experimental-transform-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "icons": "python3 -I scripts/make-icons.py",
+    "build:electron": "node scripts/build-electron.mjs",
+    "app:dev": "npm run build:electron && electron .",
+    "dist": "npm run build:electron && electron-builder --mac"
   },
   "engines": {
     "node": ">=22.6"
+  },
+  "description": "Local AI gateway for MTEL Polycon with a desktop control panel",
+  "main": "dist/electron/main.cjs",
+  "devDependencies": {
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "codex-as-api": "^0.10.1"
   }
 }
