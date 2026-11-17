@@ -1,0 +1,31 @@
+appId: th.co.mtel.local-proxy
+productName: Local Proxy
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/electron/**
+  - package.json
+  - "!**/*.map"
+extraResources:
+  - from: ui
+    to: ui
+  - from: electron/assets
+    to: assets
+  - from: electron/gateway.config.json
+    to: gateway.config.json
+asar: true
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Ad-hoc signature only: runs on the build machine; distributing to other Macs needs a Developer ID + notarization.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  # No spaces: GitHub Releases turns spaces in asset names into dots, which breaks scripts/install.sh.
+  artifactName: Local-Proxy-${version}-${arch}.${ext}
