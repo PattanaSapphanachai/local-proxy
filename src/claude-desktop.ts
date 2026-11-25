@@ -65,8 +65,18 @@ export function defaultEnvironment(overrides: Partial<ClaudeDesktopEnvironment> 
   };
 }
 
+// Auto mode's safety check. The gateway can route a session to GPT, which cannot return the provider's server-side
+// verdict (safeguard_results), so a server-side check would stall every GPT session on Claude Desktop's
+// "switched to its built-in safety check" card. With it off, Claude Code's built-in classifier always runs; its
+// requests go through the gateway like any other and follow the selected route (GPT when GPT is selected).
+export const AUTO_MODE_SERVER_CHECKS_KEY = "inferenceGatewayAutoModeServerChecks";
+export const AUTO_MODE_CLASSIFIER_MODEL = "claude-sonnet-5";
+
 export function buildProfile(gatewayUrl: string, helperPath: string, modelIds: string[], displayName: string): JsonObject {
   return {
+    [AUTO_MODE_SERVER_CHECKS_KEY]: false,
+    // Pinned to a plain ID the gateway lists, so the classifier never asks for a [1m] variant. The gateway still decides the real model.
+    ...(modelIds.includes(AUTO_MODE_CLASSIFIER_MODEL) ? { autoModeClassifierModel: AUTO_MODE_CLASSIFIER_MODEL } : {}),
     inferenceProvider: "gateway",
     inferenceGatewayBaseUrl: gatewayUrl,
     inferenceGatewayAuthScheme: "x-api-key",
@@ -135,6 +145,7 @@ export async function claudeDesktopStatus(gatewayUrl: string, env: ClaudeDesktop
     const profile = await readJson(paths(env).entry(entry.id));
     if (profile.inferenceGatewayBaseUrl !== gatewayUrl) issues.push(`The profile points at ${String(profile.inferenceGatewayBaseUrl ?? "nothing")} instead of ${gatewayUrl}.`);
     if (profile.inferenceCredentialHelper !== env.helperPath) issues.push("The profile uses a different credential helper.");
+    if (profile[AUTO_MODE_SERVER_CHECKS_KEY] !== false) issues.push("The profile still asks the gateway for server-side Auto mode checks, which stall GPT sessions. Run setup again.");
   }
   if (!helperPresent) issues.push("The credential helper has not been written yet.");
   const profileReady = issues.length === 0;

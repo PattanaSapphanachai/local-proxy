@@ -1,6 +1,6 @@
 import type { CanonicalContentBlock, CanonicalMessage, CanonicalRequest, CanonicalResponse, CanonicalStreamEvent, GatewaySession, ModelProfile } from "../types.ts";
 import type { ProviderAdapter } from "./provider.ts";
-import { id, jsonArguments, message, openaiFinishReason, reasoningEffort, sse, textContent } from "./helpers.ts";
+import { id, jsonArguments, message, openaiFinishReason, reasoningEffort, sse, stopSequences, textContent } from "./helpers.ts";
 import { mapSettings } from "../settings.ts";
 import { GatewayError } from "../errors.ts";
 
@@ -46,7 +46,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (!Array.isArray(body.messages)) throw new GatewayError("INVALID_REQUEST", "OpenAI request requires messages", 400);
     const tools = Array.isArray(body.tools) ? body.tools.flatMap((tool: any) => tool?.type === "function" ? [{ name: String(tool.function.name), description: tool.function.description, inputSchema: tool.function.parameters ?? {} }] : []) : [];
     return { sessionId, protocol: this.protocol, messages: body.messages.flatMap(parseMessage), tools, stream: body.stream === true, raw: body,
-      settings: { temperature: body.temperature as number, maxOutputTokens: (body.max_completion_tokens ?? body.max_tokens) as number, reasoning: reasoningEffort(body.reasoning_effort), toolChoice: typeof body.tool_choice === "string" ? body.tool_choice as any : undefined } };
+      settings: { temperature: body.temperature as number, maxOutputTokens: (body.max_completion_tokens ?? body.max_tokens) as number, reasoning: reasoningEffort(body.reasoning_effort), toolChoice: typeof body.tool_choice === "string" ? body.tool_choice as any : undefined, stopSequences: stopSequences(body.stop) } };
   }
   buildUpstreamRequest(request: CanonicalRequest, session: GatewaySession, model: ModelProfile): Record<string, unknown> {
     return { model: model.upstreamModel, messages: buildMessages(session.messages), stream: request.stream,

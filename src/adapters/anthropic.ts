@@ -1,6 +1,6 @@
 import type { CanonicalContentBlock, CanonicalMessage, CanonicalRequest, CanonicalResponse, CanonicalStreamEvent, GatewaySession, ModelProfile } from "../types.ts";
 import type { ProviderAdapter } from "./provider.ts";
-import { anthropicStopReason, id, message, reasoningEffort, sse, textContent } from "./helpers.ts";
+import { anthropicStopReason, id, message, reasoningEffort, sse, stopSequences, textContent } from "./helpers.ts";
 import { mapSettings } from "../settings.ts";
 import { GatewayError } from "../errors.ts";
 
@@ -87,7 +87,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     const choice = body.tool_choice as any;
     return { sessionId, protocol: this.protocol, messages: parseMessages(body), tools, stream: body.stream === true, raw: body,
       settings: { temperature: body.temperature as number, maxOutputTokens: body.max_tokens as number, reasoning: anthropicEffort(body),
-        toolChoice: choice?.type === "any" ? "required" : choice?.type === "auto" ? "auto" : undefined } };
+        toolChoice: choice?.type === "any" ? "required" : choice?.type === "auto" ? "auto" : undefined, stopSequences: stopSequences(body.stop_sequences) } };
   }
   buildUpstreamRequest(request: CanonicalRequest, session: GatewaySession, model: ModelProfile): Record<string, unknown> {
     const history = buildMessages(session.messages);

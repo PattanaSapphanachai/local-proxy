@@ -12,7 +12,11 @@ export const jsonArguments = (value: unknown): unknown => {
   if (typeof value !== "string") return value ?? {};
   try { return JSON.parse(value); } catch { return value; }
 };
-export const reasoningEffort = (value: unknown): CommonModelSettings["reasoning"] =>
+export const stopSequences = (value: unknown): string[] | undefined => {
+  const list = (typeof value === "string" ? [value] : Array.isArray(value) ? value : []).filter((item): item is string => typeof item === "string" && item.length > 0);
+  return list.length ? list : undefined;
+};
+export const reasoningEffort =(value: unknown): CommonModelSettings["reasoning"] =>
   typeof value === "string" && ["none", "low", "medium", "high", "xhigh"].includes(value) ? value as CommonModelSettings["reasoning"] : undefined;
 export const settingsWithDefaults = (request: CommonModelSettings, defaults: CommonModelSettings = {}): CommonModelSettings => ({ ...defaults, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) });
 // Stop reasons are stored as the upstream sent them and translated only when building a client response.

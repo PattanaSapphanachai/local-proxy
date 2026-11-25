@@ -402,3 +402,87 @@ test("stop reasons are translated to the client protocol on converted responses"
   const openai = await toOpenAI.gateway.handle("openai", { model: "gpt", messages: [{ role: "user", content: "plain" }] }) as any;
   assert.equal(openai.body.choices[0].finish_reason, "stop");
 });
+
+// Auto mode's built-in safety classifier: a non-streaming Anthropic request for claude-sonnet-5[1m] that expects "<block>yes|no".
+const classifierRequest = (model = "claude-sonnet-5[1m]") => ({ model, max_tokens: 64, temperature: 0, stop_sequences: ["</block>"],
+  system: [{ type: "text", text: "You judge whether an action is risky." }], messages: [{ role: "user", content: "<transcript>rm -rf build</transcript>" }] });
+const classifierHeaders = { "user-agent": "claude-cli/2.1.330 (external, cli)", "x-claude-code-request-class": "auxiliary" };
+
+test("force-model on GPT makes GPT the auto-mode classifier, with its stop sequence kept", async () => {
+  const openai = setup("gpt"); openai.providers.responses.push(openaiResponse("<block>no"));
+  const viaOpenAI = await openai.gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders) as any;
+  assert.equal(openai.providers.requests.length, 1); assert.equal(openai.providers.requests[0].protocol, "openai");
+  assert.equal(openai.providers.requests[0].body.model, "gpt-upstream"); assert.deepEqual(openai.providers.requests[0].body.stop, ["</block>"]);
+  assert.equal(viaOpenAI.body.content[0].text, "<block>no"); assert.equal(viaOpenAI.body.stop_reason, "end_turn");
+
+  const bridged = setup("gpt-anthropic"); bridged.providers.responses.push(anthropicResponse("<block>no"));
+  await bridged.gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders);
+  assert.equal(bridged.providers.requests[0].body.model, "gpt-anthropic-upstream"); assert.deepEqual(bridged.providers.requests[0].body.stop_sequences, ["</block>"]);
+});
+
+test("force-provider on GPT maps the Sonnet classifier to GPT's balanced tier, never to a Claude model", async () => {
+  const profiles: ModelProfile[] = [
+    { id: "gpt-5.6-sol", provider: "mtel", providerProtocol: "anthropic", upstreamModel: "gpt-5.6-sol", contextLimit: 10000, capabilities },
+    { id: "gpt-5.6-terra", provider: "mtel", providerProtocol: "anthropic", upstreamModel: "gpt-5.6-terra", contextLimit: 10000, capabilities },
+    { id: "claude-sonnet-5", provider: "mtel", providerProtocol: "anthropic", upstreamModel: "claude-sonnet-5", contextLimit: 10000, capabilities }
+  ];
+  const { gateway, providers, routing } = setup("gpt-5.6-sol", undefined, profiles); providers.responses.push(anthropicResponse("<block>no"));
+  routing.update({ mode: "force-provider" });
+  await gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders);
+  assert.equal(providers.requests.length, 1); assert.equal(providers.requests[0].body.model, "gpt-5.6-terra");
+});
+
+test("a [1m] context tag is dropped before routing, so Claude routes send the plain model ID", async () => {
+  const { gateway, providers, routing } = setup("claude"); providers.responses.push(anthropicResponse("<block>no"));
+  routing.update({ mode: "force-provider" });
+  const result = await gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders);
+  assert.equal(result.mode, "passthrough"); assert.equal(providers.requests[0].body.model, "claude-sonnet-5");
+  assert.deepEqual(providers.requests[0].body.stop_sequences, ["</block>"]);
+});
+
+// codex- models run on the ChatGPT transport, which rejects `stop`; the gateway clears it and cuts the reply itself.
+const codexProfiles: ModelProfile[] = [{ id: "codex-gpt", provider: "chatgpt", providerProtocol: "openai", upstreamModel: "gpt-upstream", contextLimit: 10000, capabilities,
+  providerOptions: { openai: { max_completion_tokens: null, max_tokens: null, temperature: null, top_p: null, stop: null, stream_options: null } } }];
+
+test("codex- models act as the auto-mode classifier: the gateway cuts the reply at the stop sequence", async () => {
+  const { gateway, providers } = setup("codex-gpt", undefined, codexProfiles);
+  providers.responses.push(openaiResponse("<block>no</block> because the build folder is disposable"));
+  const result = await gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders) as any;
+  assert.equal(providers.requests[0].providerId, "chatgpt"); assert.equal(providers.requests[0].body.stop, null);
+  assert.equal(result.body.content[0].text, "<block>no"); assert.equal(result.body.stop_reason, "stop_sequence");
+
+  providers.responses.push(openaiResponse("plain answer"));
+  const untouched = await gateway.handle("anthropic", classifierRequest(), undefined, classifierHeaders) as any;
+  assert.equal(untouched.body.content[0].text, "plain answer"); assert.equal(untouched.body.stop_reason, "end_turn");
+});
+
+test("codex- streams stop at a stop sequence split across chunks and close the upstream", async () => {
+  const { gateway, providers, sessions } = setup("codex-gpt", undefined, codexProfiles);
+  let closed = false;
+  providers.streamFactory = async function* () {
+    try {
+      yield { id: "s", choices: [{ delta: { role: "assistant" }, finish_reason: null }] };
+      for (const content of ["<block>n", "o</bl", "ock> and more", " text"]) yield { id: "s", choices: [{ delta: { content }, finish_reason: null }] };
+      yield { id: "s", choices: [{ delta: {}, finish_reason: "stop" }] };
+    } finally { closed = true; }
+  };
+  const result = await gateway.handle("anthropic", { ...classifierRequest(), stream: true }, "codex-stream", classifierHeaders) as any;
+  const frames: string[] = []; for await (const frame of result.events) frames.push(frame);
+  const text = frames.filter((f) => f.startsWith("event: content_block_delta")).map((f) => JSON.parse(f.split("\n")[1].slice(6)).delta.text).join("");
+  assert.equal(text, "<block>no"); assert.ok(closed);
+  assert.equal(frames.filter((f) => f.startsWith("event: message_stop")).length, 1);
+  assert.ok(frames.some((f) => f.includes('"stop_reason":"stop_sequence"')));
+  assert.equal(((await sessions.get("codex-stream"))?.messages.at(-1)?.content[0] as any).text, "<block>no");
+
+  // Text that only looks like the start of a stop sequence is released, not swallowed.
+  providers.streamFactory = async function* () {
+    yield { id: "t", choices: [{ delta: { role: "assistant" }, finish_reason: null }] };
+    yield { id: "t", choices: [{ delta: { content: "a </b" }, finish_reason: null }] };
+    yield { id: "t", choices: [{ delta: { content: "r>" }, finish_reason: null }] };
+    yield { id: "t", choices: [{ delta: {}, finish_reason: "stop" }] };
+  };
+  const partial = await gateway.handle("anthropic", { ...classifierRequest(), stream: true }, "codex-partial", classifierHeaders) as any;
+  const partialFrames: string[] = []; for await (const frame of partial.events) partialFrames.push(frame);
+  assert.equal(partialFrames.filter((f) => f.startsWith("event: content_block_delta")).map((f) => JSON.parse(f.split("\n")[1].slice(6)).delta.text).join(""), "a </br>");
+  assert.ok(partialFrames.some((f) => f.includes('"stop_reason":"end_turn"')));
+});

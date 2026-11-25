@@ -58,6 +58,7 @@ test("setup writes the helper, the applied profile, and 3p mode, preserving unre
     assert.equal(profile.inferenceGatewayAuthScheme, "x-api-key"); assert.equal(profile.inferenceCredentialKind, "helper-script");
     assert.equal(profile.inferenceCredentialHelper, env.helperPath); assert.equal(profile.modelDiscoveryEnabled, true);
     assert.deepEqual(profile.inferenceModels, [{ name: "claude-test" }]); assert.equal(profile.deploymentDisplayName, "Test Co");
+    assert.equal(profile.inferenceGatewayAutoModeServerChecks, false); assert.equal(profile.autoModeClassifierModel, undefined);
     assert.equal((await stat(join(env.dataDir, "configLibrary", `${entry.id}.json`))).mode & 0o777, 0o600);
     assert.deepEqual(await readJson(join(env.dataDir, "claude_desktop_config.json")), { deploymentMode: "3p", preferences: { keep: true } });
 
@@ -79,6 +80,17 @@ test("status reports a missing app, a stale profile, and an unsupported platform
     await setupClaudeDesktop("http://localhost:8787", ["claude-test"], env, { relaunch: false });
     const stale = await claudeDesktopStatus("http://localhost:9999", env);
     assert.equal(stale.configured, false); assert.ok(stale.issues.some((issue) => issue.includes("http://localhost:8787 instead of http://localhost:9999")));
+    // A profile written before server-side checks were turned off is reported, and setup fixes it.
+    const entryId = (await readJson(join(env.dataDir, "configLibrary", "_meta.json"))).entries[0].id;
+    const profilePath = join(env.dataDir, "configLibrary", `${entryId}.json`);
+    const { inferenceGatewayAutoModeServerChecks: _checks, ...legacy } = await readJson(profilePath);
+    await writeFile(profilePath, JSON.stringify(legacy));
+    const legacyStatus = await claudeDesktopStatus("http://localhost:8787", env);
+    assert.equal(legacyStatus.profileReady, false); assert.ok(legacyStatus.issues.some((issue) => issue.includes("server-side Auto mode checks")));
+    await setupClaudeDesktop("http://localhost:8787", ["claude-test", "claude-sonnet-5"], env, { relaunch: false });
+    const fixed = await readJson(profilePath);
+    assert.equal(fixed.inferenceGatewayAutoModeServerChecks, false); assert.equal(fixed.autoModeClassifierModel, "claude-sonnet-5");
+    assert.equal((await claudeDesktopStatus("http://localhost:8787", env)).profileReady, true);
     const other = await claudeDesktopStatus("http://localhost:8787", { ...env, platform: "linux" });
     assert.equal(other.supported, false);
     await assert.rejects(setupClaudeDesktop("http://localhost:8787", [], { ...env, platform: "linux" }), /only available on macOS/);

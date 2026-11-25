@@ -22,6 +22,8 @@ export interface CommonModelSettings {
   temperature?: number;
   maxOutputTokens?: number;
   toolChoice?: "auto" | "none" | "required";
+  /** Anthropic stop_sequences / OpenAI stop. Auto mode's classifier relies on it to end its reply at the verdict. */
+  stopSequences?: string[];
 }
 
 export interface CanonicalRequest {

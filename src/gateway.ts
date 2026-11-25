@@ -17,6 +17,11 @@ export type GatewayResult =
 
 const comparable = (messages: CanonicalMessage[]): string => JSON.stringify(messages.map(({ role, content }) => ({ role, content })));
 const withoutMetadata = (body: Record<string, unknown>): Record<string, unknown> => { if (body.metadata === undefined) return body; const { metadata: _metadata, ...rest } = body; return rest; };
+// Claude Code names 1M-context variants "<id>[1m]" (auto mode's classifier asks for claude-sonnet-5[1m] by default).
+// No upstream lists those IDs, so the tag is dropped before routing and the plain ID is what goes upstream.
+const CONTEXT_TAG = /\[\d+m\]$/i;
+const withoutContextTag = (body: Record<string, unknown>): Record<string, unknown> =>
+  typeof body.model === "string" && CONTEXT_TAG.test(body.model) ? { ...body, model: body.model.replace(CONTEXT_TAG, "") } : body;
 const modelFamily = (model: string): string => model.split("-", 1)[0].toLowerCase();
 type ModelTier = "frontier" | "flagship" | "balanced" | "efficient";
 const modelTier = (model: string): ModelTier | undefined => {
@@ -34,6 +39,35 @@ const modelSeries = (model: string): string | undefined => {
   if (!gpt) return undefined;
   return gpt[1] === "6" ? "gpt-6" : `gpt-${gpt[1]}${gpt[2] ? `.${gpt[2]}` : ""}`;
 };
+
+// Some upstreams reject stop sequences (the ChatGPT transport behind codex- models clears `stop`). On converted routes the
+// gateway enforces them itself: the reply ends just before the first stop sequence, as the APIs do, with stop reason
+// "stop_sequence". Where the upstream already honored them the text never contains one, so this changes nothing.
+export function cutAtStopSequence(blocks: CanonicalContentBlock[], stops: string[] | undefined): CanonicalContentBlock[] | undefined {
+  if (!stops?.length) return undefined;
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index]; if (block.type !== "text") continue;
+    const at = Math.min(...stops.map((stop) => block.text.indexOf(stop)).filter((position) => position >= 0));
+    if (Number.isFinite(at)) return [...blocks.slice(0, index), { type: "text", text: block.text.slice(0, at) }];
+  }
+  return undefined;
+}
+
+// Streaming form: holds back only the tail that could still grow into a stop sequence, releases the rest at once.
+class StopSequenceGuard {
+  #held = ""; matched = false;
+  constructor(private stops: string[]) {}
+  push(text: string): string {
+    const buffer = this.#held + text;
+    const at = Math.min(...this.stops.map((stop) => buffer.indexOf(stop)).filter((position) => position >= 0));
+    if (Number.isFinite(at)) { this.matched = true; this.#held = ""; return buffer.slice(0, at); }
+    let keep = 0;
+    for (const stop of this.stops) for (let length = Math.min(stop.length - 1, buffer.length); length > keep; length--) if (stop.startsWith(buffer.slice(buffer.length - length))) { keep = length; break; }
+    this.#held = buffer.slice(buffer.length - keep);
+    return buffer.slice(0, buffer.length - keep);
+  }
+  flush(): string { const held = this.#held; this.#held = ""; return held; }
+}
 
 class StreamAccumulator {
   id = `msg_${randomUUID()}`; blocks: CanonicalContentBlock[] = []; usage: { inputTokens?: number; outputTokens?: number } = {}; reason?: string;
@@ -56,8 +90,9 @@ export class Gateway {
   constructor(private models: ModelRegistry, private sessions: SessionService, private routing: RoutingService, private adapters: AdapterRegistry, private providers: ProviderClient,
     private context = new ContextManager(), private observer: Observer = new NoopObserver()) {}
 
-  async handle(protocol: Protocol, body: Record<string, unknown>, sessionId?: string, clientHeaders: Record<string, string> = {}): Promise<GatewayResult> {
+  async handle(protocol: Protocol, incomingBody: Record<string, unknown>, sessionId?: string, clientHeaders: Record<string, string> = {}): Promise<GatewayResult> {
     const started = performance.now();
+    const body = withoutContextTag(incomingBody);
     const clientAdapter = this.adapters.get(protocol);
     const session = await this.sessions.resolve(sessionId);
     const parsed = clientAdapter.parseIncomingRequest(body, session.id);
@@ -110,7 +145,10 @@ export class Gateway {
         let raw: Record<string, unknown>;
         try { raw = await complete(upstreamBody); }
         catch (error) { const retry = retryBodyFor(error); if (!retry) throw error; raw = await complete(retry); }
-        const canonical = targetAdapter.normalizeUpstreamResponse(raw); await this.sessions.appendAssistant(merged.id, canonical.message);
+        const canonical = targetAdapter.normalizeUpstreamResponse(raw);
+        const cut = mode === "converted" ? cutAtStopSequence(canonical.message.content, parsed.settings.stopSequences) : undefined;
+        if (cut) { canonical.message.content = cut; canonical.stopReason = "stop_sequence"; }
+        await this.sessions.appendAssistant(merged.id, canonical.message);
         Object.assign(observation, { latencyMs: performance.now() - started, inputTokens: canonical.usage?.inputTokens, outputTokens: canonical.usage?.outputTokens, toolCalls: canonical.message.content.filter((b) => b.type === "tool_call").length });
         this.observer.record(observation);
         return { stream: false, sessionId: merged.id, mode, body: mode === "passthrough" ? raw : clientAdapter.buildClientResponse(canonical) };
@@ -128,13 +166,28 @@ export class Gateway {
       async function* translate(): AsyncIterable<string> {
         const accumulator = new StreamAccumulator(); let firstToken: number | undefined;
         const upstreamState: Record<string, unknown> = {}; const clientState: Record<string, unknown> = {};
+        const stops = parsed.settings.stopSequences;
+        const guard = mode === "converted" && stops?.length ? new StopSequenceGuard(stops) : undefined;
+        const deliver = (event: CanonicalStreamEvent): string[] => {
+          if (firstToken === undefined && (event.type === "text_delta" || event.type === "tool_call_start")) firstToken = performance.now();
+          accumulator.add(event); return clientAdapter.buildClientStreamEvents(event, clientState);
+        };
         try {
-          for await (const nativeEvent of upstreamEvents()) {
+          upstream: for await (const nativeEvent of upstreamEvents()) {
             for (const event of targetAdapter.translateStreamEvent(nativeEvent, upstreamState)) {
-              if (firstToken === undefined && (event.type === "text_delta" || event.type === "tool_call_start")) firstToken = performance.now();
-              accumulator.add(event); for (const frame of clientAdapter.buildClientStreamEvents(event, clientState)) yield frame;
+              if (!guard) { yield* deliver(event); continue; }
+              if (event.type === "text_delta") {
+                const text = guard.push(event.text);
+                if (text) yield* deliver({ type: "text_delta", text });
+                // Leaving the loop closes the upstream stream, so the provider stops generating past the stop sequence.
+                if (guard.matched) { yield* deliver({ type: "message_end", reason: "stop_sequence" }); break upstream; }
+                continue;
+              }
+              const held = guard.flush(); if (held) yield* deliver({ type: "text_delta", text: held });
+              yield* deliver(event);
             }
           }
+          const tail = guard?.flush(); if (tail) yield* deliver({ type: "text_delta", text: tail });
           await self.sessions.appendAssistant(merged.id, accumulator.message());
           Object.assign(observation, { latencyMs: performance.now() - started, timeToFirstTokenMs: firstToken === undefined ? undefined : firstToken - started,
             inputTokens: accumulator.usage.inputTokens, outputTokens: accumulator.usage.outputTokens, toolCalls: accumulator.blocks.filter((b) => b.type === "tool_call").length });

@@ -10,7 +10,12 @@ export function mapSettings(protocol: Protocol, settings: CommonModelSettings, m
     if (protocol === "openai") result.tool_choice = merged.toolChoice === "required" ? "required" : merged.toolChoice;
     else if (merged.toolChoice !== "none") result.tool_choice = { type: merged.toolChoice === "required" ? "any" : "auto" };
   }
-  if (merged.reasoning && merged.reasoning !== "none" && model.capabilities.reasoning) {
+  // OpenAI accepts at most four stop sequences; providers that reject the field clear it through providerOptions below.
+  if (merged.stopSequences?.length) {
+    if (protocol === "openai") result.stop = merged.stopSequences.slice(0, 4);
+    else result.stop_sequences = merged.stopSequences;
+  }
+  if (merged.reasoning &&merged.reasoning !== "none" && model.capabilities.reasoning) {
     if (protocol === "openai") result.reasoning_effort = merged.reasoning;
     else result.output_config = { effort: merged.reasoning };
   }
