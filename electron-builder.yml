@@ -14,6 +14,8 @@ extraResources:
     to: assets
   - from: electron/gateway.config.json
     to: gateway.config.json
+  - from: scripts/install.sh
+    to: install.sh
 asar: true
 npmRebuild: false
 mac:

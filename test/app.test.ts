@@ -62,7 +62,7 @@ test("settings endpoint stores an editable key and base URL without echoing the 
 
 test("control UI is served from uiDir and cannot escape it", async () => {
   const { dir, options } = await fixture(); const restore = quiet();
-  const gateway = await startGateway(options);
+  const gateway = await startGateway({ ...options, version: "9.8.7" });
   try {
     const page = await fetch(`${gateway.url}/`);
     assert.equal(page.status, 200); assert.match(page.headers.get("content-type") ?? "", /text\/html/);
@@ -72,7 +72,7 @@ test("control UI is served from uiDir and cannot escape it", async () => {
     assert.equal((await fetch(`${gateway.url}/%2e%2e%2fgateway.config.json`)).status, 404);
     assert.equal((await fetch(`${gateway.url}/..%2fgateway.config.json`)).status, 404);
     const status = await json(await fetch(`${gateway.url}/status`));
-    assert.equal(status.url, gateway.url); assert.equal(status.routing.model, "claude-test");
+    assert.equal(status.url, gateway.url); assert.equal(status.routing.model, "claude-test"); assert.equal(status.version, "9.8.7");
   } finally { await gateway.close(); restore(); await rm(dir, { recursive: true }); }
 });
 

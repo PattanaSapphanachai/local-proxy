@@ -37,6 +37,8 @@ export interface GatewayAppOptions {
   /** Embedded ChatGPT backend, started only when the config has a provider with "embedded": "chatgpt". */
   chatgpt?: ChatGPTBackendOptions;
   warn?: (line: string) => void;
+  /** App version reported by GET /status and shown in the control panel. */
+  version?: string;
 }
 
 export interface RunningGateway {
@@ -185,7 +187,7 @@ export async function startGateway(options: GatewayAppOptions = {}): Promise<Run
     let protocol: Protocol = url.pathname === "/v1/messages" ? "anthropic" : "openai";
     try {
       if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true });
-      if (request.method === "GET" && url.pathname === "/status") return sendJson(response, 200, { ok: true, startedAt, uptimeSeconds: Math.floor(process.uptime()), url: `http://${host}:${boundPort}`, routing: routingStatus(), modelCount: models.list().length });
+      if (request.method === "GET" && url.pathname === "/status") return sendJson(response, 200, { ok: true, startedAt, uptimeSeconds: Math.floor(process.uptime()), url: `http://${host}:${boundPort}`, routing: routingStatus(), modelCount: models.list().length, version: options.version ?? null });
       if (request.method === "GET" && url.pathname === "/routing") return sendJson(response, 200, routingStatus());
       if (request.method === "PUT" && url.pathname === "/routing") {
         const body = await jsonBody(request);

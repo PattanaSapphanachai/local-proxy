@@ -13,7 +13,7 @@ html { -webkit-text-size-adjust:100% }
 body { margin:0; min-height:100vh; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); -webkit-user-select:none; user-select:none; -webkit-font-smoothing:antialiased }
 main { max-width:1080px; margin:0 auto; padding:0 clamp(12px, 3vw, 28px) 40px }
 header { position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:16px 0 14px; margin-bottom:4px; background:color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px) }
-h1 { font-size:20px; margin:0; letter-spacing:-.01em }
+h1 { font-size:20px; margin:0; letter-spacing:-.01em } h1 .version { font-size:12px; font-weight:500; color:var(--muted); margin-left:8px; letter-spacing:0 }
 h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px }
 .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); font-weight:500; white-space:nowrap }
 .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); transition:background .2s } .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
@@ -56,7 +56,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
 </head>
 <body>
 <main>
-  <header><h1>Local Proxy</h1><span class="pill" role="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></span></header>
+  <header><h1>Local Proxy<span class="version" id="version"></span></h1><span class="pill" role="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></span></header>
   <div id="banner" class="banner">No API key saved yet. Enter your MTEL API key in the Connection section to start routing requests.</div>
 
   <div class="grid">
@@ -132,7 +132,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
     try {
       const s = await api("/status");
       setStatus("ok", "Running");
-      $("addr").textContent = s.url;
+      $("addr").textContent = s.url; $("version").textContent = s.version ? `v${s.version}` : "";
       $("uptime").textContent = `Up ${fmtUptime(s.uptimeSeconds)} · ${s.modelCount} models · routing to ${s.routing.model} via ${s.routing.provider}`;
       routing = s.routing; syncRoutingForm();
     } catch { setStatus("bad", "Unreachable"); }
