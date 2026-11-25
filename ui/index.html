@@ -126,7 +126,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
     "force-model": "Every request goes to the selected model, whatever model the client asked for.",
     "force-provider": "Requests keep their capability tier (Opus↔Sol, Sonnet↔Terra, …) within the selected model's provider and generation."
   };
-  let routing = null, settings = null;
+  let routing = null, settings = null, routingDirty = false; // dirty: the user changed the routing form but has not applied it yet
 
   async function loadStatus() {
     try {
@@ -138,7 +138,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
     } catch { setStatus("bad", "Unreachable"); }
   }
   function syncRoutingForm() {
-    if (!routing) return;
+    if (!routing || routingDirty) return;
     if ([...$("model").options].some((o) => o.value === routing.model)) $("model").value = routing.model;
     $("mode").value = routing.mode; $("effort").value = routing.reasoningEffort ?? "";
     $("modeHint").textContent = modeHints[$("mode").value] || "";
@@ -147,7 +147,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
     const { models } = await api("/models");
     const groups = new Map();
     for (const m of models) { if (!groups.has(m.provider)) groups.set(m.provider, []); groups.get(m.provider).push(m); }
-    const select = $("model"); select.replaceChildren();
+    const select = $("model"); const pending = routingDirty ? select.value : null; select.replaceChildren();
     for (const [provider, list] of groups) {
       const g = document.createElement("optgroup"); g.label = provider;
       for (const m of list.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))) {
@@ -155,7 +155,8 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
       }
       select.appendChild(g);
     }
-    syncRoutingForm();
+    if (pending !== null) { if ([...select.options].some((o) => o.value === pending)) select.value = pending; }
+    else syncRoutingForm();
   }
   async function loadSettings() {
     settings = await api("/settings");
@@ -177,6 +178,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
   }
 
   $("provider").addEventListener("change", (e) => { e.target.dataset.chosen = e.target.value; syncSettingsForm(); });
+  for (const id of ["model", "mode", "effort"]) $(id).addEventListener("change", () => { routingDirty = true; });
   $("mode").addEventListener("change", () => { $("modeHint").textContent = modeHints[$("mode").value] || ""; });
   $("copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("addr").textContent); toast("Address copied"); } catch { toast("Could not copy", true); } });
   $("reveal").addEventListener("click", () => { const i = $("apiKey"); i.type = i.type === "password" ? "text" : "password"; $("reveal").textContent = i.type === "password" ? "Show" : "Hide"; });
@@ -185,7 +187,7 @@ label.inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-
     $("applyRouting").disabled = true;
     try {
       routing = await api("/routing", { method: "PUT", body: JSON.stringify({ model: $("model").value, mode: $("mode").value, reasoningEffort: $("effort").value || null }) });
-      toast(`Now routing to ${routing.model}`); loadStatus();
+      routingDirty = false; syncRoutingForm(); toast(`Now routing to ${routing.model}`); loadStatus();
     } catch (e) { toast(e.message, true); } finally { $("applyRouting").disabled = false; }
   });
   $("saveSettings").addEventListener("click", async () => {
