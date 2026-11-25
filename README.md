@@ -57,7 +57,8 @@ The gateway can also run as a macOS menu-bar app so nobody has to install Node o
 ```bash
 npm install
 npm run app:dev      # bundle electron/main.ts and launch the app against the working copy
-npm run dist         # build release/Local Proxy-<version>-<arch>.dmg (arm64 and x64)
+npm run dist         # bump the patch version, then build release/Local-Proxy-<version>-<arch>.dmg (arm64 and x64)
+npm run release      # tag v<version>, push it, and publish the DMGs as a GitHub release (needs gh)
 ```
 
 The app ships only `electron/gateway.config.json`, which names the MTEL Polycon base URL with no key, plus the embedded ChatGPT provider. Each user pastes their own API key in the Connection section; it is stored with the selected route under the app's user-data folder (`~/Library/Application Support/Local Proxy/`), never inside the bundle, so it survives updates. The key can be changed or removed from the same screen.
@@ -70,7 +71,7 @@ The Claude Desktop section sets up Claude Desktop's third-party (3p) provider mo
 
 Auto mode's safety check always runs as Claude Code's built-in classifier on this gateway. The profile sets `inferenceGatewayAutoModeServerChecks` to `false`, because a GPT route can never return the provider's server-side verdict and Claude Desktop would otherwise stall each GPT session on a "switched to its built-in safety check" card. The classifier's own requests follow the selected route like any other request: with a GPT model selected, in `force-model` or `force-provider`, GPT is the classifier and no Claude model is called. The gateway drops Claude Code's `[1m]` context tag from model IDs before routing and carries stop sequences across protocols, so the classifier's verdict ends where it expects. Where an upstream rejects stop sequences, as the ChatGPT transport behind `codex-` models does, the gateway enforces them itself on converted routes: the reply is cut just before the first stop sequence, the stop reason becomes `stop_sequence`, and a stream closes its upstream connection at that point. `codex-` models therefore act as the classifier the same way MTEL's GPT models do. Run Claude Desktop setup again to update an older profile; the status endpoint reports a profile that still asks for server-side checks.
 
-If port 8787 is taken, for example by a copy started with `npm start`, the app offers to retry and can be launched with `GATEWAY_PORT` set to another port. Rebuilding after a gateway change is `npm run dist` again; users replace the old app and keep their settings. The release is ad-hoc signed, so it runs on the build machine and on Macs where the user allows it in Privacy & Security; distributing widely needs a Developer ID certificate and notarization.
+If port 8787 is taken, for example by a copy started with `npm start`, the app offers to retry and can be launched with `GATEWAY_PORT` set to another port. Rebuilding after a gateway change is `npm run dist` again; users replace the old app and keep their settings. To publish a build, commit the version bump that `npm run dist` made, then run `npm run release`: it refuses to run with uncommitted changes or missing DMGs, tags the commit `v<version>`, pushes the branch and tag, and creates the GitHub release with both DMGs attached, which is what `scripts/install.sh` downloads. `DRY_RUN=1 npm run release` prints the steps without running them. The release is ad-hoc signed, so it runs on the build machine and on Macs where the user allows it in Privacy & Security; distributing widely needs a Developer ID certificate and notarization.
 
 ## Routing behavior
 
